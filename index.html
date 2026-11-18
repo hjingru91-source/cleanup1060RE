@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>合租打卡</title>
+<style>
+:root{--bg:#f6f4ef;--card:#fff;--ink:#1d1d1b;--mute:#76736b;--line:#e8e4da;--ok:#2f7d5b;--warn:#c0392b;--accent:#1d1d1b;--chip:#efece4}
+@media (prefers-color-scheme:dark){:root{--bg:#161614;--card:#1f1f1d;--ink:#f1efe9;--mute:#9a968b;--line:#2d2c29;--ok:#59b88d;--warn:#ef7a6c;--accent:#f1efe9;--chip:#2a2927}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0 auto;background:var(--bg);color:var(--ink);font:16px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC",sans-serif;padding:16px 14px 80px;max-width:520px}
+header{display:flex;align-items:center;justify-content:space-between;margin:4px 2px 14px}
+h1{font-size:22px;margin:0}
+.sub{color:var(--mute);font-size:13px}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+.icon{font-size:20px;padding:6px 10px;border-radius:10px;background:var(--chip)}
+.banner{background:var(--chip);color:var(--mute);font-size:13px;padding:8px 12px;border-radius:10px;margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
+.name{font-weight:600;font-size:17px}
+.next{font-size:13px;color:var(--mute);margin-top:6px}
+.next b{color:var(--ink);font-size:20px;margin-left:4px}
+.last{font-size:13px;color:var(--mute);margin-top:2px}
+.last.late{color:var(--warn)}
+.btn{display:block;width:100%;margin-top:12px;padding:12px;border-radius:12px;background:var(--accent);color:var(--bg);font-weight:600;text-align:center}
+.btn:active{opacity:.8}
+.alt{margin-top:8px;font-size:13px;color:var(--mute);text-align:center}
+.alt button{color:var(--mute);text-decoration:underline;padding:4px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;justify-content:center}
+.chip{padding:8px 14px;border-radius:999px;background:var(--chip);font-size:14px}
+h2{font-size:15px;margin:22px 2px 8px;color:var(--mute);font-weight:600}
+.bar{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:14px}
+.bar .n{width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar .t{flex:1;height:8px;background:var(--chip);border-radius:6px;overflow:hidden}
+.bar .t i{display:block;height:100%;background:var(--ok);border-radius:6px}
+.bar .c{width:26px;text-align:right;color:var(--mute)}
+.log{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px}
+.log:last-child{border:0}
+.log .m{color:var(--mute);font-size:12px}
+.log button{color:var(--mute);font-size:18px;padding:2px 8px}
+.sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;z-index:9}
+.sheet{background:var(--bg);width:100%;max-width:520px;border-radius:20px 20px 0 0;padding:18px 16px 28px;max-height:85vh;overflow:auto}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+input[type=text]{width:100%;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);margin:4px 0}
+.two{display:grid;grid-template-columns:1fr 70px 36px;gap:6px;align-items:center;margin:4px 0}
+.sm{padding:8px 12px;border-radius:10px;background:var(--chip);font-size:14px;margin-top:8px}
+.empty{color:var(--mute);font-size:14px;text-align:center;padding:12px}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>合租打卡</h1><div class="sub" id="sub"></div></div>
+  <button class="icon" id="gear" aria-label="设置">⚙︎</button>
+</header>
+<div id="banner"></div>
+<div id="chores"></div>
+<h2>本月出力榜</h2>
+<div class="card" id="stats"></div>
+<h2>最近记录</h2>
+<div class="card" id="history"></div>
+<div id="modal"></div>
+
+<script src="config.js"></script>
+<script>
+(function(){
+  var CFG=window.APP_CONFIG||{};
+  var online=!!(CFG.SUPABASE_URL&&CFG.SUPABASE_KEY&&/^https:\/\/[a-z0-9-]+\.supabase\.co/i.test(CFG.SUPABASE_URL));
+  var LKEY='housemate-chores-web-v1';
+  var DEFAULT={
+    members:[{id:'m1',name:'我'},{id:'m2',name:'室友2'},{id:'m3',name:'室友3'}],
+    chores:[
+      {id:'c1',emoji:'🗑️',name:'倒垃圾',every:3},
+      {id:'c2',emoji:'🍳',name:'打扫厨房',every:7},
+      {id:'c3',emoji:'🚿',name:'打扫卫生间',every:7},
+      {id:'c4',emoji:'🧹',name:'吸地拖地',every:7}
+    ]
+  };
+  var state={members:clone(DEFAULT.members),chores:clone(DEFAULT.chores),logs:[]};
+  var altOpen=null,draft=null,busy=false;
+
+  function clone(o){return JSON.parse(JSON.stringify(o))}
+  function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
+  function $(id){return document.getElementById(id)}
+  function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+  function banner(t){$('banner').innerHTML=t?'<div class="banner">'+esc(t)+'</div>':''}
+
+  // ---------- data layer ----------
+  function api(path,opt){
+    opt=opt||{};
+    var h={'apikey':CFG.SUPABASE_KEY,'Content-Type':'application/json'};
+    if(opt.prefer)h['Prefer']=opt.prefer;
+    return fetch(CFG.SUPABASE_URL.replace(/\/$/,'')+'/rest/v1/'+path,{method:opt.method||'GET',headers:h,body:opt.body?JSON.stringify(opt.body):undefined})
+      .then(function(r){if(!r.ok)throw new Error('http '+r.status);return r.status===204?null:r.text().then(function(t){return t?JSON.parse(t):null})});
+  }
+  function pull(){
+    if(!online){
+      try{var s=JSON.parse(localStorage.getItem(LKEY));if(s&&s.members){state=s}}catch(e){}
+      render();return Promise.resolve();
+    }
+    return Promise.all([api('config?id=eq.main&select=data'),api('logs?select=*&order=at.asc&limit=1000')]).then(function(r){
+      var cfg=r[0]&&r[0][0]&&r[0][0].data;
+      if(cfg&&cfg.members&&cfg.chores){state.members=cfg.members;state.chores=cfg.chores}
+      else{ // first run: seed defaults
+        api('config',{method:'POST',prefer:'resolution=ignore-duplicates',body:{id:'main',data:DEFAULT}}).catch(function(){});
+      }
+      state.logs=(r[1]||[]).map(function(l){return{id:l.id,chore:l.chore,by:l.who,at:Number(l.at)}});
+      banner('');if(!draft)render();
+    }).catch(function(){banner('连不上服务器，显示的可能不是最新记录')});
+  }
+  function saveLocal(){try{localStorage.setItem(LKEY,JSON.stringify(state))}catch(e){}}
+  function addLog(l){
+    state.logs.push(l);render();
+    if(!online){saveLocal();return}
+    api('logs',{method:'POST',body:{id:l.id,chore:l.chore,who:l.by,at:l.at}}).catch(function(){banner('打卡没保存成功，请重试');pull()});
+  }
+  function delLog(id){
+    state.logs=state.logs.filter(function(l){return l.id!==id});render();
+    if(!online){saveLocal();return}
+    api('logs?id=eq.'+encodeURIComponent(id),{method:'DELETE'}).catch(function(){banner('撤销没成功，请重试');pull()});
+  }
+  function saveConfig(){
+    if(!online){saveLocal();return}
+    api('config?on_conflict=id',{method:'POST',prefer:'resolution=merge-duplicates',body:{id:'main',data:{members:state.members,chores:state.chores}}})
+      .catch(function(){banner('设置没保存成功，请重试')});
+  }
+
+  // ---------- logic ----------
+  function memberName(id){var m=state.members.find(function(x){return x.id===id});return m?m.name:'（已删除）'}
+  function lastLog(cid){
+    var best=null;
+    state.logs.forEach(function(l){if(l.chore===cid&&(!best||l.at>=best.at))best=l});
+    return best;
+  }
+  function nextMember(cid){
+    var l=lastLog(cid),ms=state.members;
+    if(!l)return ms[0];
+    var i=ms.findIndex(function(m){return m.id===l.by});
+    return ms[(i+1)%ms.length];
+  }
+  function ago(ts){
+    var m=Math.floor((Date.now()-ts)/60000),h=Math.floor(m/60);
+    if(m<1)return '刚刚';if(m<60)return m+' 分钟前';if(h<24)return h+' 小时前';return Math.floor(h/24)+' 天前';
+  }
+  function dayDiff(ts){var a=new Date(ts),b=new Date();a.setHours(0,0,0,0);b.setHours(0,0,0,0);return Math.round((b-a)/86400000)}
+  function fmt(ts){var d=new Date(ts);return (d.getMonth()+1)+'/'+d.getDate()+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)}
+
+  function render(){
+    $('sub').textContent=state.members.map(function(m){return m.name}).join(' · ');
+    var h='';
+    if(!state.chores.length)h='<div class="empty">还没有任务，点右上角 ⚙︎ 添加</div>';
+    state.chores.forEach(function(c){
+      var nx=nextMember(c.id),l=lastLog(c.id),late=false,txt='还没人做过';
+      if(l){late=c.every>0&&dayDiff(l.at)>=c.every;txt='上次 '+memberName(l.by)+' · '+ago(l.at)+(late?'（该做了）':'')}
+      h+='<div class="card"><div class="name">'+esc(c.emoji||'')+' '+esc(c.name)+'</div>'
+        +'<div class="next">轮到<b>'+esc(nx.name)+'</b></div>'
+        +'<div class="last'+(late?' late':'')+'">'+esc(txt)+'</div>'
+        +'<button class="btn" data-ci="'+c.id+'" data-by="'+nx.id+'">✅ '+esc(nx.name)+' 做完了</button>'
+        +'<div class="alt"><button data-alt="'+c.id+'">别人做的？</button></div>';
+      if(altOpen===c.id){
+        h+='<div class="chips">'+state.members.filter(function(m){return m.id!==nx.id}).map(function(m){
+          return '<button class="chip" data-ci="'+c.id+'" data-by="'+m.id+'">'+esc(m.name)+' 做的</button>'}).join('')+'</div>';
+      }
+      h+='</div>';
+    });
+    $('chores').innerHTML=h;
+
+    var now=new Date(),som=new Date(now.getFullYear(),now.getMonth(),1).getTime(),cnt={};
+    state.members.forEach(function(m){cnt[m.id]=0});
+    state.logs.forEach(function(l){if(l.at>=som&&cnt[l.by]!==undefined)cnt[l.by]++});
+    var mx=Math.max.apply(null,Object.keys(cnt).map(function(k){return cnt[k]}).concat([1]));
+    $('stats').innerHTML=state.members.map(function(m){
+      return '<div class="bar"><span class="n">'+esc(m.name)+'</span><span class="t"><i style="width:'+(cnt[m.id]/mx*100)+'%"></i></span><span class="c">'+cnt[m.id]+'</span></div>'}).join('');
+
+    var recent=state.logs.slice().sort(function(a,b){return b.at-a.at}).slice(0,12);
+    $('history').innerHTML=recent.length?recent.map(function(l){
+      var c=state.chores.find(function(x){return x.id===l.chore});
+      return '<div class="log"><div>'+esc(c?(c.emoji||'')+' '+c.name:'（已删除任务）')+' · '+esc(memberName(l.by))+'<br><span class="m">'+fmt(l.at)+'</span></div><button data-del="'+l.id+'" aria-label="撤销">×</button></div>'}).join('')
+      :'<div class="empty">还没有记录</div>';
+  }
+
+  document.addEventListener('click',function(e){
+    var t=e.target.closest('button');if(!t)return;
+    if(t.dataset.ci){altOpen=null;addLog({id:uid(),chore:t.dataset.ci,by:t.dataset.by,at:Date.now()})}
+    else if(t.dataset.alt){altOpen=altOpen===t.dataset.alt?null:t.dataset.alt;render()}
+    else if(t.dataset.del){delLog(t.dataset.del)}
+    else if(t.id==='gear'){draft={members:clone(state.members),chores:clone(state.chores)};drawSettings()}
+  });
+
+  // ---------- settings ----------
+  function drawSettings(){
+    var h='<div class="sheet-bg" id="bg"><div class="sheet"><div class="row"><div class="name">设置</div><button class="icon" id="close">完成</button></div><h2>室友（轮流顺序）</h2>';
+    draft.members.forEach(function(m,i){h+='<input type="text" data-mi="'+i+'" value="'+esc(m.name)+'" maxlength="12">'});
+    h+='<h2>任务（名称 · 几天内要做一次）</h2>';
+    draft.chores.forEach(function(c,i){
+      h+='<div class="two"><input type="text" data-cn="'+i+'" value="'+esc((c.emoji?c.emoji+' ':'')+c.name)+'" maxlength="16">'
+        +'<input type="text" inputmode="numeric" data-ce="'+i+'" value="'+c.every+'"><button data-rm="'+i+'" aria-label="删除">🗑</button></div>'});
+    h+='<button class="sm" id="addc">＋ 添加任务</button>';
+    h+='<h2>数据</h2><div class="sub">'+(online?'已联网：所有人看到的是同一份记录。':'还没配置后端，只保存在这台设备上。')+'</div></div></div>';
+    $('modal').innerHTML=h;
+    $('close').onclick=closeSettings;
+    $('bg').onclick=function(e){if(e.target.id==='bg')closeSettings()};
+    $('addc').onclick=function(){sync();draft.chores.push({id:'c'+uid(),emoji:'✨',name:'新任务',every:7});drawSettings()};
+    document.querySelectorAll('[data-rm]').forEach(function(b){b.onclick=function(){sync();draft.chores.splice(+b.dataset.rm,1);drawSettings()}});
+  }
+  function sync(){
+    document.querySelectorAll('[data-mi]').forEach(function(i){var v=i.value.trim();if(v)draft.members[+i.dataset.mi].name=v});
+    document.querySelectorAll('[data-cn]').forEach(function(i){
+      var c=draft.chores[+i.dataset.cn],v=i.value.trim();if(!v)return;
+      var m=v.match(/^(\S+)\s+(.+)$/u);
+      if(m&&!/^[一-龥A-Za-z0-9]+$/.test(m[1])){c.emoji=m[1];c.name=m[2]}else{c.emoji='';c.name=v}
+    });
+    document.querySelectorAll('[data-ce]').forEach(function(i){var n=parseInt(i.value,10);draft.chores[+i.dataset.ce].every=isNaN(n)?0:n});
+  }
+  function closeSettings(){
+    sync();state.members=draft.members;state.chores=draft.chores;draft=null;
+    $('modal').innerHTML='';saveConfig();render();
+  }
+
+  // ---------- boot ----------
+  if(!online)banner('预览模式：还没配置后端，数据只在本机。');
+  pull();
+  setInterval(function(){if(!draft&&online)pull();else if(!draft)render()},20000);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden&&!draft)pull()});
+})();
+</script>
+</body>
+</html>
